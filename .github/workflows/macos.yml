@@ -191,6 +191,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # The step logs show only the tail of each command; the full logs are needed when a step fails.
+      - name: Upload logs of a failed build
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-logs-${{ inputs.defconfig }}
+          path: out/*/logs/**
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload userdata
         if: inputs.upload_userdata && contains(inputs.steps, 'userdata')
         uses: actions/upload-artifact@v4
