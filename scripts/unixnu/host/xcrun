@@ -30,7 +30,17 @@ def sdk_name(value):
     return next((key for key in PLATFORMS if name.startswith(key) or name.startswith(PLATFORMS[key][0].lower())), 'macosx')
 
 
+# Apple's own cctools beside UNIXNU_LD64 (scripts/build-ld64-linux.sh) where LLVM's lack what XNU uses: libtool -ca,
+# strip of the kernel, nmedit, codesign_allocate.
+CCTOOLS = ('libtool', 'strip', 'nmedit', 'codesign_allocate', 'ctf_insert')
+
+
 def find(name):
+    ld64 = os.environ.get('UNIXNU_LD64', '')
+    if name in CCTOOLS and ld64.endswith('-ld'):
+        cctool = ld64[:-len('ld')] + name
+        if os.access(cctool, os.X_OK):
+            return cctool
     target = TOOLS.get(name, name)
     found = target and (target if os.path.isabs(target) and os.access(target, os.X_OK) else shutil.which(target))
     if not found:
