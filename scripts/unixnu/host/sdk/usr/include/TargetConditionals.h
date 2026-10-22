@@ -24,8 +24,13 @@
 #define TARGET_OS_SIMULATOR __is_target_environment(simulator)
 #define TARGET_OS_IPHONE (TARGET_OS_IOS || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION || TARGET_OS_BRIDGE)
 #define TARGET_OS_EMBEDDED (TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR && !TARGET_OS_MACCATALYST)
+/* clang 21 predefines these two for Darwin targets; Apple's clang does not. */
+#ifndef TARGET_OS_NANO
 #define TARGET_OS_NANO TARGET_OS_WATCH
+#endif
+#ifndef TARGET_IPHONE_SIMULATOR
 #define TARGET_IPHONE_SIMULATOR TARGET_OS_SIMULATOR
+#endif
 
 #if defined(__arm64__) || defined(__aarch64__)
 #define TARGET_CPU_ARM64 1
