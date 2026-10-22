@@ -67,6 +67,8 @@ concurrency:
 env:
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
+  # Authenticated GitHub API calls (prepare-xnu-source.py, gh): the anonymous limit is per runner address.
+  GITHUB_TOKEN: ${{ github.token }}
 
 jobs:
   build:
