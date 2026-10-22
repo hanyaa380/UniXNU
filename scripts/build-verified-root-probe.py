@@ -136,7 +136,10 @@ for source in (ROOT / 'kits/VerifiedRoot/src/verified_root.c', ROOT / 'kits/Veri
         elif value not in ('-MD', '-MP'):
             command.append(value)
         index += 1
-    command += ['-I' + str(ROOT / 'kits/VerifiedRoot/include'), '-Werror']
+    # The record carries -Weverything with the exceptions XNU knows; upstream clang 19+ adds groups Apple's clang does not
+    # have here (-Wunsafe-buffer-usage and its libc variant), which -Werror would turn into failures.
+    command += ['-I' + str(ROOT / 'kits/VerifiedRoot/include'), '-Werror', '-Wno-unknown-warning-option',
+                '-Wno-unsafe-buffer-usage', '-Wno-unsafe-buffer-usage-in-libc-call']
     result = subprocess.run(command, cwd=record['directory'], capture_output=True, text=True)
     (out / (source.stem + '.log')).write_text(result.stdout + result.stderr)
     if result.returncode:
