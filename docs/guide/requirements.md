@@ -2,11 +2,11 @@
 
 ## Host
 
-The build driver runs on macOS and Linux. The `--skip-setup` option invokes `hdiutil`; on Linux the driver refuses it before it fetches anything. The package, firmware, payload, boot image, IPSW and userdata steps run on both hosts. The kernel step builds on macOS; on Linux it needs two tools that have no open equivalent yet, see [Kernel on Linux](#kernel-on-linux). On Linux the userdata step expands UDIF disk images itself, decoding LZFSE chunks with `lzfse`, and checks each block table CRC32.
+The build driver runs on macOS and Linux. The `--skip-setup` option invokes `hdiutil`; on Linux the driver refuses it before it fetches anything. The package, firmware, payload, boot image, IPSW and userdata steps run on both hosts. The kernel step builds on both; on Linux it needs a toolchain built once and Apple's iig outputs from CI, see [Kernel on Linux](#kernel-on-linux). On Linux the userdata step expands UDIF disk images itself, decoding LZFSE chunks with `lzfse`, and checks each block table CRC32.
 
 | Tool | Used by | macOS | Fedora |
 | --- | --- | --- | --- |
-| macOS with Xcode | kernel, skip-setup, seed-data-grow | App Store or developer.apple.com | not available; see [Kernel on Linux](#kernel-on-linux) |
+| macOS with Xcode | kernel, skip-setup, seed-data-grow | App Store or developer.apple.com | kernel: see [Kernel on Linux](#kernel-on-linux) |
 | Python 3.11 or newer | every step | python.org or Homebrew | `python3` |
 | git, make | fetch, firmware | Xcode command line tools or Homebrew | `git make` |
 | C and C++ compiler, libuuid | EDK II BaseTools | Xcode command line tools | `gcc gcc-c++ libuuid-devel` |
@@ -31,16 +31,31 @@ The driver finds the keg-only Homebrew LLVM at `/opt/homebrew/opt/llvm/bin` with
 
 ### Kernel on Linux
 
-Off macOS the kernel step uses `scripts/unixnu/host`: an `xcrun` that answers `-find` and the `--show-sdk-*` queries, `ditto`, `sw_vers`, `plutil`, `install`, a target `clang` that turns `-arch` into a Darwin target, and `ld` for `ld64.lld`. `scripts/build-host-tools-linux.sh` builds `mig` from `bootstrap_cmds` and the Mach headers of XNU's SETUP tools. `libfirehose_kernel` is compiled without `xcodebuild`. The stand-in iPhoneOS SDK holds only `TargetConditionals.h`; Apple's SDK is not used. CTF is off (`DO_CTFMERGE=0`); the kernel step produces the `.noctf` kernel.
+Off macOS the kernel step replaces what Xcode provides. Apple's SDKs are never used.
 
-Two inputs are still missing:
+| Xcode provides | On Linux |
+| --- | --- |
+| `xcrun`, `ditto`, `sw_vers`, `plutil`, `install`, `ld` | `scripts/unixnu/host` |
+| `mig` | built from `bootstrap_cmds` by `scripts/build-host-tools-linux.sh` |
+| clang with `__builtin_xnu_type_signature`, `__builtin_xnu_type_summary` and `__builtin_xnu_types_compatible` | `scripts/build-xnu-clang-linux.sh DIR`: LLVM 21.1.8 with minidarwin's layout builtins, enabled for arm64 (`UNIXNU_XNU_CLANG`) |
+| `ld64` | `scripts/build-ld64-linux.sh DIR`: ld64-951.9 and cctools from cctools-port (`UNIXNU_LD64`). `ld64.lld` ignores `-static`, `-segaddr`, `-segment_order`, `-image_base` and `-alias_list` |
+| `iig` | the outputs of Apple's `iig` from the `macOS build` workflow (artifact `unixnu-iig-outputs`), replayed when each `.iig` has the recorded sha256 (`UNIXNU_IIG_OUTPUTS`) |
+| `libclang_rt.cc_kext` | `scripts/build-cc-kext-linux.py`: compiler-rt's builtins and kernel profile runtime |
+| SDK headers | XNU's installed headers, the Libc, libpthread, libdispatch, libmalloc and dyld headers, and a stand-in `TargetConditionals.h` |
+| `libfirehose_kernel` | compiled without `xcodebuild` |
 
-| Tool | Why | State |
-| --- | --- | --- |
-| `iig` | Generates the DriverKit headers and `*.iig.cpp` files of IOKit. Its `*_Methods` macros add virtual methods to `OSObject` and `IOService`, so the output sets the vtables that the original kexts are prelinked against. | Xcode only. The driver refuses the kernel step without `UNIXNU_IIG`. Open reimplementations exist (PureDarwin `iig-tools`); none is checked against Apple's output. |
-| clang with `__builtin_xnu_type_signature`, `__builtin_xnu_type_summary` and `__builtin_xnu_types_compatible` | `kalloc_type` in `osfmk/kern/kalloc.h` uses them without a fallback. | Apple clang only. Upstream LLVM lacks them; the first kernel compile error is in `security/mac_base.c`. |
+`patches/xnu-linux` adapts the source to upstream clang: `xnu_usage_semantics` becomes `annotate`, which the layout builtins read, and the arm64 crypto assembly uses the `v` register syntax. The driver applies these patches only on Linux. CTF is off (`DO_CTFMERGE=0`); the step produces the `.noctf` kernel.
 
-Until both exist, build the kernel with the `macOS build` workflow.
+```sh
+scripts/build-xnu-clang-linux.sh ~/unixnu-toolchain/clang   # some 20 minutes on 32 cores
+scripts/build-ld64-linux.sh ~/unixnu-toolchain/ld64
+export UNIXNU_XNU_CLANG=~/unixnu-toolchain/clang/bin/clang
+export UNIXNU_LD64=~/unixnu-toolchain/ld64/bin/arm64-apple-darwin-ld
+export UNIXNU_IIG_OUTPUTS=~/unixnu-iig-outputs              # gh run download RUN -n unixnu-iig-outputs -D ...
+./unixnu build kernel
+```
+
+The driver checks each of these before it fetches anything. The kernel built this way links and prelinks. Against the macOS build of the same sources it has the same segment layout and the same exported symbols, apart from those of the iig outputs when they come from another iig. The local symbols differ: Xcode's clang splits cold code (`.cold.N`) and outlines functions; upstream clang does not. It has not been booted. `UNIXNU_IIG` accepts another `iig` for build tests; PureDarwin's `iig-tools` builds, but its RPC message layouts differ from Apple's.
 
 Network access is required for `unixnu fetch`, which updates the module submodules and fetches Apple source references and a Mu_Basecore tree.
 
