@@ -41,7 +41,13 @@ for LATE_PATCH in "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
   fi
 done
-for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.patch; do
+# Linux hosts (XNU_HOST_PATCHES=linux, set by the unixnu driver) add patches/xnu-linux: build adaptations for
+# upstream clang that must not reach an Apple clang build.
+HOST_PATCHES=()
+if [ "${XNU_HOST_PATCHES:-}" = linux ]; then
+  HOST_PATCHES=("$ROOT"/patches/xnu-linux/*.patch)
+fi
+for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.patch ${HOST_PATCHES[@]+"${HOST_PATCHES[@]}"}; do
   if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --check "$PATCH"
     git -C .cache/xnu-work apply "$PATCH"
@@ -111,8 +117,10 @@ for header in Path('refer/libdispatch/os').glob('*.h'):
     if not target.exists() or target.read_bytes() != result.stdout:
         target.write_bytes(result.stdout)
 PY
+# Linux hosts: make overrides for the macOS tool paths XNU names directly (set by the unixnu driver; empty on macOS).
+read -r -a HOST_MAKE_ARGS <<< "${XNU_HOST_MAKE_ARGS:-}"
 if [ ! -f "$KERNEL_SDKROOT/.xnu-$XNU_VERSION-headers" ]; then
-  make -C .cache/xnu-work installhdrs SDKROOT=macosx ARCH_CONFIGS=ARM64 \
+  make -C .cache/xnu-work installhdrs SDKROOT=macosx ARCH_CONFIGS=ARM64 ${HOST_MAKE_ARGS[@]+"${HOST_MAKE_ARGS[@]}"} \
     MACHINE_CONFIGS=BCM2837 KERNEL_CONFIGS=DEVELOPMENT \
     RC_DARWIN_KERNEL_VERSION="$XNU_DARWIN" RC_ProjectSourceVersion="$XNU_VERSION" \
     MAKEJOBS=-j"${JOBS:-4}" OBJROOT="$ROOT/build/xnu/obj" \
@@ -763,7 +771,7 @@ if not stamp.exists() or stamp.read_text() != identity:
     stamp.write_text(identity)
 PY
 EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_BOOT_PROGRESS=$BOOT_PROGRESS"
-make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iphoneos}" ARCH_CONFIGS=ARM64 \
+make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iphoneos}" ARCH_CONFIGS=ARM64 ${HOST_MAKE_ARGS[@]+"${HOST_MAKE_ARGS[@]}"} \
   MACHINE_CONFIGS=BCM2837 KERNEL_CONFIGS=DEVELOPMENT \
   ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY \
   ARM64_LINK_ADDR=0xfffffff007004000 ARM64_PLKSEG_ADDR=0xfffffff004004000 \

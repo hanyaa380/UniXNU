@@ -1,0 +1,20 @@
+#!/bin/sh
+# Target compiler for Linux hosts. Apple's clang defaults to a Darwin target and takes -arch; Linux clang rejects
+# -arch for its own target. -arch ARCH becomes -target ARCH-apple-darwin, and the deployment flags of the command
+# (-miphoneos-version-min=...) select the OS as with Apple's clang. Installed as clang and clang++ (by name).
+# UNIXNU_XNU_CLANG names a clang with XNU's __builtin_xnu_type_* (scripts/build-xnu-clang-linux.sh); its clang++
+# is the one next to it.
+base=${UNIXNU_XNU_CLANG:-clang}
+case $(basename "$0") in
+  *++) compiler=$base++ ;;
+  *) compiler=$base ;;
+esac
+for arg; do
+  shift
+  if [ -n "$arch" ]; then set -- "$@" -target "$arg-apple-darwin"; arch=; continue; fi
+  case $arg in
+    -arch) arch=1 ;;
+    *) set -- "$@" "$arg" ;;
+  esac
+done
+exec "$compiler" "$@"

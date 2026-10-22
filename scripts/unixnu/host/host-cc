@@ -1,0 +1,18 @@
+#!/bin/sh
+# Host C compiler of XNU's SETUP tools on Linux: drop the macOS sysroot and deployment flags, add the Darwin
+# compatibility headers (compat/) and the Mach headers of scripts/build-host-tools-linux.sh, run the Linux clang.
+HERE=$(cd "$(dirname "$0")" && pwd)
+INCLUDE=${UNIXNU_HOST_INCLUDE:?UNIXNU_HOST_INCLUDE is set by the unixnu driver}
+for arg; do
+  shift
+  if [ -n "$skip" ]; then skip=; continue; fi
+  case $arg in
+    -mmacosx-version-min=*) ;;
+    -isysroot) skip=1 ;;
+    -c|-E|-S) compile=1; set -- "$@" "$arg" ;;
+    *) set -- "$@" "$arg" ;;
+  esac
+done
+# libSystem has uuid_generate on macOS; Linux links libuuid.
+[ -n "$compile" ] || set -- "$@" -luuid
+exec clang -include "$INCLUDE/compat.h" -include "$HERE/compat/unixnu-host.h" -I"$HERE/compat" -I"$INCLUDE" "$@"

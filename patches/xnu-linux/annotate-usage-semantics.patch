@@ -1,0 +1,50 @@
+diff --git a/bsd/sys/cdefs.h b/bsd/sys/cdefs.h
+--- a/bsd/sys/cdefs.h
++++ b/bsd/sys/cdefs.h
+@@ -1280,7 +1280,7 @@
+ #endif
+ #endif /* XNU_KERNEL_PRIVATE */
+ 
+-#if defined(KERNEL) && __has_attribute(xnu_usage_semantics)
++#if defined(KERNEL) && __has_attribute(annotate)
+ /*
+  * These macros can be used to annotate type definitions or scalar structure
+  * fields to inform the compiler about which semantic they have with regards
+@@ -1289,17 +1289,17 @@
+  * This information is used in the analysis of the types performed by the
+  * signature based type segregation implemented in kalloc.
+  */
+-#define __kernel_ptr_semantics __attribute__((xnu_usage_semantics("pointer")))
+-#define __kernel_data_semantics __attribute__((xnu_usage_semantics("data")))
+-#define __kernel_dual_semantics __attribute__((xnu_usage_semantics("pointer", "data")))
+-
+-#else  /* defined(KERNEL) && __has_attribute(xnu_usage_semantics) */
++#define __kernel_ptr_semantics __attribute__((annotate("xnu:pointer")))
++#define __kernel_data_semantics __attribute__((annotate("xnu:data")))
++#define __kernel_dual_semantics __attribute__((annotate("xnu:dual")))
++
++#else  /* defined(KERNEL) && __has_attribute(annotate) */
+ 
+ #define __kernel_ptr_semantics
+ #define __kernel_data_semantics
+ #define __kernel_dual_semantics
+ 
+-#endif /* defined(KERNEL) && __has_attribute(xnu_usage_semantics) */
++#endif /* defined(KERNEL) && __has_attribute(annotate) */
+ 
+ #if XNU_KERNEL_PRIVATE
+ /*
+diff --git a/bsd/sys/_types/_uintptr_t.h b/bsd/sys/_types/_uintptr_t.h
+--- a/bsd/sys/_types/_uintptr_t.h
++++ b/bsd/sys/_types/_uintptr_t.h
+@@ -30,8 +30,8 @@
+ 
+ #ifndef __has_attribute
+ typedef unsigned long           uintptr_t;
+-#elif KERNEL && __has_attribute(xnu_usage_semantics)
+-typedef unsigned long           uintptr_t __attribute__((xnu_usage_semantics("pointer")));
++#elif KERNEL && __has_attribute(annotate)
++typedef unsigned long           uintptr_t __attribute__((annotate("xnu:pointer")));
+ #else
+ typedef unsigned long           uintptr_t;
+ #endif /* __has_attribute */

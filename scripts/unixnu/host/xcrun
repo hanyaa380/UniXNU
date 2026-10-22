@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""xcrun for Linux hosts: the parts of xcrun the kernel step uses, answered from LLVM and this directory.
+
+  xcrun [-sdk NAME] -find TOOL           path of TOOL
+  xcrun [-sdk NAME] --show-sdk-path      UNIXNU_HOST_SDKS/<Platform>.sdk
+  xcrun [-sdk NAME] --show-sdk-version   UNIXNU_SDK_VERSION_<NAME>, or the deployment version below
+  xcrun [-sdk NAME] --show-sdk-platform-path
+  xcrun [-sdk NAME] TOOL ARGS...         run TOOL
+"""
+import os
+import shutil
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+# Apple tool name -> Linux tool. A missing entry runs the same name from PATH.
+TOOLS = {'clang': str(HERE / 'darwin-cc'), 'clang++': str(HERE / 'darwin-c++'), 'cc': str(HERE / 'darwin-cc'),
+         'c++': str(HERE / 'darwin-c++'), 'ld': str(HERE / 'ld'), 'lipo': 'llvm-lipo', 'libtool': 'llvm-libtool-darwin',
+         'otool': 'llvm-otool', 'nm': 'llvm-nm', 'strip': 'llvm-strip', 'ar': 'llvm-ar', 'ranlib': 'llvm-ranlib',
+         'c++filt': 'llvm-cxxfilt', 'dsymutil': 'dsymutil', 'install_name_tool': 'llvm-install-name-tool',
+         'gm4': 'm4', 'plutil': str(HERE / 'plutil'),
+         'mig': os.environ.get('UNIXNU_MIG', 'mig'), 'migcom': os.environ.get('UNIXNU_MIGCOM', 'migcom'),
+         'iig': os.environ.get('UNIXNU_IIG', '')}
+PLATFORMS = {'iphoneos': ('iPhoneOS', '17.0'), 'macosx': ('MacOSX', '14.0')}
+
+
+def sdk_name(value):
+    # iphoneos, iphoneos.internal, iphoneos17.0 or a path all mean the platform.
+    name = Path(value).name.lower()
+    return next((key for key in PLATFORMS if name.startswith(key) or name.startswith(PLATFORMS[key][0].lower())), 'macosx')
+
+
+def find(name):
+    target = TOOLS.get(name, name)
+    found = target and (target if os.path.isabs(target) and os.access(target, os.X_OK) else shutil.which(target))
+    if not found:
+        sys.exit(f'xcrun: error: unable to find utility "{name}" (Linux shim: {target or "no Linux equivalent"})')
+    return found
+
+
+def main(args):
+    sdk = os.environ.get('SDKROOT', 'macosx')
+    while args and args[0] in ('-sdk', '--sdk', '-verbose', '--verbose', '-v', '-run', '--run', '-log', '--log',
+                               '-no-cache', '--no-cache', '-toolchain', '--toolchain'):
+        option = args.pop(0)
+        if option in ('-sdk', '--sdk', '-toolchain', '--toolchain'):
+            value = args.pop(0)
+            if option.endswith('sdk'):
+                sdk = value
+    platform, version = PLATFORMS[sdk_name(sdk)]
+    sdks = Path(os.environ.get('UNIXNU_HOST_SDKS', HERE))
+    if not args:
+        sys.exit('usage: xcrun [-sdk NAME] (-find TOOL | --show-sdk-path | TOOL ARGS...)')
+    query = args[0].lstrip('-')
+    if query == 'find':
+        print(find(args[1]))
+    elif query == 'show-sdk-path':
+        print(sdks / f'{platform}.sdk')
+    elif query == 'show-sdk-version':
+        print(os.environ.get(f'UNIXNU_SDK_VERSION_{platform.upper()}', version))
+    elif query == 'show-sdk-platform-path':
+        print(sdks / f'{platform}.platform')
+    elif query in ('show-sdk-build-version', 'show-sdk-platform-version'):
+        print(version)
+    else:
+        os.execv(find(args[0]), [args[0], *args[1:]])
+
+
+main(sys.argv[1:])

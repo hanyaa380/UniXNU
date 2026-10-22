@@ -1,0 +1,18 @@
+#!/bin/sh
+# ditto for Linux hosts: copy SOURCE (a file, or a directory's contents) to DEST, merging into DEST.
+# Apple-only options (--noextattr, --norsrc, --noqtn, --noacl, -V, ...) are ignored.
+set -e
+while [ $# -gt 2 ]; do
+  case $1 in
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+[ $# -eq 2 ] || { echo "usage: ditto [options] SOURCE DEST" >&2; exit 64; }
+if [ -d "$1" ]; then
+  mkdir -p "$2"
+  cp -R -p "$1"/. "$2"/
+else
+  mkdir -p "$(dirname "$2")"
+  cp -p "$1" "$2"
+fi

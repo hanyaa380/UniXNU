@@ -1,12 +1,11 @@
 """Command line of the UniXNU build driver."""
 import argparse
-import platform
 import shutil
 import sys
 
 from . import bootimg, feeds, firmware, ipsw, kernel, package, payload, tree, userdata
 from .config import LOCAL_KINDS, Context, parse_config
-from .util import Error, expand, git, log
+from .util import MACOS, Error, expand, git, log, need_macos
 
 STEPS = ('kernel', 'package', 'firmware', 'payload')
 OPTIONAL_STEPS = ('userdata',)   # large; built only when named
@@ -73,7 +72,7 @@ def need_uefi(ctx):
     return uefi
 
 
-REFERENCES = {'kernel': ('xnu', 'libplatform', 'libdispatch', 'AvailabilityVersions', 'libpthread', 'corecrypto-2023', 'IOStorageFamily'), 'package': ('edk2',), 'firmware': ('edk2',)}
+REFERENCES = {'kernel': ('xnu', 'libplatform', 'libdispatch', 'AvailabilityVersions', 'libpthread', 'corecrypto-2023', 'IOStorageFamily', 'bootstrap_cmds'), 'package': ('edk2',), 'firmware': ('edk2',)}
 
 
 def prepare(ctx, steps=()):
@@ -120,10 +119,15 @@ def cmd_build(ctx):
         steps = [step for step in steps if step != 'userdata']
         if not steps:
             return
+    # Fail before fetching anything.
     if 'kernel' in steps:
         ctx.need_config()
+        if not MACOS:
+            kernel.need_linux_host()
+    if 'payload' in steps and ctx.args.skip_setup:
+        need_macos('--skip-setup (hdiutil)')
     if 'firmware' in steps:
-        need_uefi(ctx)   # fail before fetching anything
+        need_uefi(ctx)
     modules = prepare(ctx, steps + (['kernel'] if 'prelink' in steps else []))
     if 'kernel' in steps:
         kernel.build(ctx, modules)
@@ -203,8 +207,6 @@ def cmd_clean(ctx):
 def main(argv=None):
     if sys.version_info < (3, 11):
         sys.exit('unixnu needs Python 3.11 or newer')
-    if platform.system() != 'Darwin':
-        print('unixnu: developed and tested on macOS only; the kernel step needs Xcode and --skip-setup needs hdiutil', file=sys.stderr)
     args = parser().parse_args(argv)
     try:
         ctx = Context(args)

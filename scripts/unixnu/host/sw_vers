@@ -1,0 +1,8 @@
+#!/bin/sh
+# sw_vers for Linux hosts: XNU reads -productVersion as the host deployment version of its SETUP tools.
+case $1 in
+  -productVersion) echo 14.0 ;;
+  -buildVersion) echo 23A344 ;;
+  -productName) echo macOS ;;
+  *) printf 'ProductName:\tmacOS\nProductVersion:\t14.0\nBuildVersion:\t23A344\n' ;;
+esac

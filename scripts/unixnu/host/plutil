@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""plutil for Linux hosts: the forms the kernel step uses.
+
+  plutil -extract KEY raw -n FILE           print a top-level string
+  plutil -convert binary1|xml1|json -o OUT IN  write IN in that format
+  plutil -lint [-s] FILE...                 check that each FILE is a property list
+
+Input is an XML or binary property list, or an OpenStep text one (Xcode's project.pbxproj).
+"""
+import json
+import plistlib
+import re
+import sys
+
+TOKEN = re.compile(r'\s+|/\*.*?\*/|//[^\n]*|"((?:[^"\\]|\\.)*)"|([{}()=;,<>])|((?:[^\s{}()=;,"<>/]|/(?![*/]))+)', re.S)
+ESCAPES = {'n': '\n', 't': '\t', 'r': '\r', '"': '"', '\\': '\\', 'a': '\a', 'b': '\b', 'f': '\f', 'v': '\v'}
+
+
+def openstep(text):
+    """Parse an OpenStep property list (dictionaries, arrays, strings; <hex> data)."""
+    tokens = []
+    for m in TOKEN.finditer(text):
+        if m.group(1) is not None:
+            tokens.append(('s', re.sub(r'\\(.)', lambda e: ESCAPES.get(e.group(1), e.group(1)), m.group(1))))
+        elif m.group(2):
+            tokens.append(('p', m.group(2)))
+        elif m.group(3):
+            tokens.append(('s', m.group(3)))
+    position = 0
+
+    def value():
+        nonlocal position
+        kind, text = tokens[position]
+        position += 1
+        if kind == 's':
+            return text
+        if text == '{':
+            result = {}
+            while tokens[position] != ('p', '}'):
+                key = value()
+                assert tokens[position] == ('p', '='), 'expected ='
+                position += 1
+                result[key] = value()
+                assert tokens[position] == ('p', ';'), 'expected ;'
+                position += 1
+            position += 1
+            return result
+        if text == '(':
+            result = []
+            while tokens[position] != ('p', ')'):
+                result.append(value())
+                if tokens[position] == ('p', ','):
+                    position += 1
+            position += 1
+            return result
+        if text == '<':
+            data = ''
+            while tokens[position] != ('p', '>'):
+                data += tokens[position][1]
+                position += 1
+            position += 1
+            return bytes.fromhex(data)
+        raise ValueError(f'unexpected {text!r}')
+
+    result = value()
+    if position != len(tokens):
+        raise ValueError('trailing content')
+    return result
+
+
+def load(name):
+    data = open(name, 'rb').read()
+    if data.startswith((b'bplist', b'<?xml', b'<!DOCTYPE', b'<plist')):
+        return plistlib.loads(data)
+    text = data.decode('utf-8')
+    if text.startswith('// !$*UTF8*$!'):
+        text = text.split('\n', 1)[1]
+    return openstep(text)
+
+
+args = sys.argv[1:]
+if args[:1] == ['-extract'] and len(args) >= 3 and args[2] == 'raw':
+    value = load(args[-1])[args[1]]
+    sys.stdout.write(str(value) + ('' if '-n' in args else '\n'))
+elif args[:1] == ['-convert'] and len(args) >= 3:
+    out = args[args.index('-o') + 1] if '-o' in args else args[-1]
+    data = load(args[-1])
+    if args[1] == 'json':
+        with open(out, 'w') as stream:
+            json.dump(data, stream)
+    elif args[1] in ('binary1', 'xml1'):
+        with open(out, 'wb') as stream:
+            plistlib.dump(data, stream, fmt=plistlib.FMT_BINARY if args[1] == 'binary1' else plistlib.FMT_XML)
+    else:
+        sys.exit(f'plutil (Linux shim): unsupported format {args[1]}')
+elif args[:1] == ['-lint']:
+    for name in [arg for arg in args[1:] if arg != '-s']:
+        try:
+            load(name)
+        except Exception as error:
+            sys.exit(f'{name}: {error}')
+        if '-s' not in args:
+            print(f'{name}: OK')
+else:
+    sys.exit(f'plutil (Linux shim): unsupported arguments: {" ".join(args)}')

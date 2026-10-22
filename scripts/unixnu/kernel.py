@@ -1,10 +1,12 @@
 """XNU kernel: build from the patched Apple source, then prelink against the original kernelcache."""
 import os
 import shlex
+import shutil
+import subprocess
 from pathlib import Path
 
 from . import ipsw
-from .util import Error, expand, log, run, sha256_file, tool
+from .util import MACOS, Error, expand, install, log, run, sha256_file, tool
 
 
 def xnu_env(ctx):
@@ -37,11 +39,75 @@ def version_env(modules):
     return env
 
 
-def toolchain_path():
+def toolchain_path(path=None):
     """PATH with the Homebrew LLVM and LLD first, as the archive builders expect."""
     extra = [d for d in ('/opt/homebrew/opt/llvm/bin', '/opt/homebrew/opt/lld/bin', '/usr/local/opt/llvm/bin', '/usr/local/opt/lld/bin')
              if Path(d).is_dir()]
-    return os.pathsep.join(extra + [os.environ.get('PATH', '')])
+    return os.pathsep.join(extra + [path or os.environ.get('PATH', '')])
+
+
+HOST = Path(__file__).resolve().parent / 'host'
+
+
+def need_linux_host():
+    """The iig and host tools of a Linux host; checked before anything is fetched. Returns the iig."""
+    # iig output defines the DriverKit methods of OSObject and IOService, so their vtables; no approximation is used.
+    # UNIXNU_IIG_OUTPUTS replays the files Apple's iig made in a macOS build (unixnu-iig-outputs of the workflow).
+    outputs = os.environ.get('UNIXNU_IIG_OUTPUTS')
+    if outputs and not (expand(outputs) / 'manifest.json').is_file():
+        raise Error(f'UNIXNU_IIG_OUTPUTS: {outputs} has no manifest.json (scripts/export-iig-outputs.py makes it)')
+    iig = os.environ.get('UNIXNU_IIG') or (str(HOST / 'iig-replay') if outputs else shutil.which('iig'))
+    if not iig:
+        raise Error('the kernel step needs iig, the IOKit interface generator of Xcode, which has no Linux equivalent: '
+                    'set UNIXNU_IIG_OUTPUTS to the unixnu-iig-outputs artifact of the "macOS build" workflow '
+                    '(or UNIXNU_IIG to an iig for this host), or build the kernel on macOS')
+    for name in ('clang', 'ld64.lld', 'llvm-lipo', 'llvm-libtool-darwin', 'llvm-otool', 'llvm-nm', 'llvm-strip', 'dsymutil',
+                 'flex', 'bison', 'm4', 'perl'):
+        tool(name, install('clang llvm lld flex bison m4 perl'))
+    if not Path('/bin/csh').is_file():
+        raise Error(f'XNU runs SETUP/config/doconf with /bin/csh: {install("tcsh")}')
+    ld64 = os.environ.get('UNIXNU_LD64')
+    if not ld64 or not os.access(expand(ld64), os.X_OK):
+        # ld64.lld ignores -static, -segaddr, -segment_order, -image_base and -alias_list of the kernel link.
+        raise Error('the kernel link needs Apple\'s ld64: build it with scripts/build-ld64-linux.sh DIR and set '
+                    'UNIXNU_LD64=DIR/bin/arm64-apple-darwin-ld')
+    # kalloc_type uses Apple clang's __builtin_xnu_type_* without a fallback.
+    clang = os.environ.get('UNIXNU_XNU_CLANG', 'clang')
+    probe = subprocess.run([clang, '-target', 'arm64-apple-ios17.0', '-fsyntax-only', '-x', 'c', '-'], capture_output=True,
+                           input='_Static_assert(__builtin_xnu_type_summary(void *) != 0, "");\n', text=True)
+    if probe.returncode:
+        raise Error(f'{clang} lacks the __builtin_xnu_type_* builtins XNU needs: build one with '
+                    'scripts/build-xnu-clang-linux.sh DIR and set UNIXNU_XNU_CLANG=DIR/bin/clang')
+    return iig
+
+
+def host_env(ctx, env):
+    """Linux hosts: the xcrun, ditto, sw_vers and plutil of scripts/unixnu/host, mig built from bootstrap_cmds, and
+    the make overrides for the macOS paths XNU names directly. macOS keeps Xcode's tools."""
+    iig = need_linux_host()
+    env = dict(env, UNIXNU_LD64=str(expand(os.environ['UNIXNU_LD64'])))
+    if os.environ.get('UNIXNU_IIG_OUTPUTS'):
+        env = dict(env, UNIXNU_IIG_OUTPUTS=str(expand(os.environ['UNIXNU_IIG_OUTPUTS'])))   # read from other directories
+    run(['bash', ctx.tree / 'scripts/build-host-tools-linux.sh'], cwd=ctx.tree, log_file=ctx.logs / 'host-tools.log')
+    sdks = ctx.tree / '.cache/host-sdk'
+    for name in ('iPhoneOS.platform', 'MacOSX.platform'):
+        (sdks / name).mkdir(parents=True, exist_ok=True)
+    # The stand-in SDKs: the few open headers of scripts/unixnu/host/sdk, never Apple's SDKs. Its headers take their
+    # values from the compile target, so both platforms share them.
+    for name in ('iPhoneOS.sdk', 'MacOSX.sdk'):
+        shutil.copytree(HOST / 'sdk', sdks / name, dirs_exist_ok=True)
+    bin_dir = ctx.tree / 'build/host-tools/bin'
+    make = {'XCRUN': HOST / 'xcrun', 'HOST_CC': HOST / 'host-cc', 'HOST_FLEX': shutil.which('flex'), 'HOST_BISON': shutil.which('bison'),
+            'HOST_GM4': shutil.which('m4'), 'HOST_OS_VERSION': '14.0', 'PLUTIL': HOST / 'plutil', 'DO_CTFMERGE': '0',
+            'HOST_CODESIGN': shutil.which('true'),   # ad-hoc signing of the host tools is a macOS requirement
+            # XNU reads these from /usr/sbin/sysctl hw.* to size its jobs.
+            'SYSCTL_HW_PHYSICALCPU': os.cpu_count(), 'SYSCTL_HW_LOGICALCPU': os.cpu_count(),
+            'MEMORY_SIZE': os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')}
+    return dict(env, PATH=os.pathsep.join([str(HOST), str(bin_dir), env['PATH']]), UNIXNU_HOST_SDKS=str(sdks), UNIXNU_IIG=iig,
+                UNIXNU_MIG=str(bin_dir / 'mig'), UNIXNU_MIGCOM=str(bin_dir / 'migcom'),
+                UNIXNU_HOST_INCLUDE=str(ctx.tree / 'build/host-tools/include'),
+                XNU_HOST_PATCHES='linux',   # patches/xnu-linux
+                XNU_HOST_MAKE_ARGS=' '.join(f'{key}={value}' for key, value in make.items()))
 
 
 def build_archives(ctx, env):
@@ -54,7 +120,7 @@ def build_archives(ctx, env):
     if not ctx.need_config().get('XNU_BUILD_ARCHIVES'):
         return
     entries = ctx.board.get('kernel', {}).get('archives', [])
-    env = dict(env, PATH=toolchain_path())
+    env = dict(env, PATH=toolchain_path(env.get('PATH')))
     for index, entry in enumerate(entries, 1):
         parts = shlex.split(entry)
         script = ctx.tree / 'scripts' / parts[0]
@@ -71,12 +137,13 @@ def build_archives(ctx, env):
 def build(ctx, modules):
     log('kernel: XNU')
     for name in ('git', 'make', 'clang', 'cmake', 'ninja', 'unifdef'):
-        tool(name, 'brew install ' + name)
-    tool('xcodebuild', 'the kernel step builds with the Xcode iphoneos SDK')
+        tool(name, install(name, 'ninja-build' if name == 'ninja' else None))
+    if MACOS:
+        tool('xcodebuild', 'the kernel step builds with the Xcode iphoneos SDK')
     script = ctx.tree / 'scripts/build-xnu-4k-baseline.sh'
     if not script.is_file():
         raise Error(f'{script} missing')
-    env = dict(os.environ)
+    env = dict(os.environ) if MACOS else host_env(ctx, dict(os.environ))
     env.update(xnu_env(ctx))
     env.update(version_env(modules))
     env['JOBS'] = str(ctx.jobs)

@@ -1,0 +1,10 @@
+#!/bin/sh
+# BSD install for Linux hosts: XNU passes -c (copy, the default) and -S (safe copy); GNU install reads -S SUFFIX.
+for arg; do
+  shift
+  case $arg in
+    -c|-S) ;;
+    *) set -- "$@" "$arg" ;;
+  esac
+done
+exec /usr/bin/install "$@"

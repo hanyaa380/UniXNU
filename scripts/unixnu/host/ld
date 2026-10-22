@@ -1,0 +1,21 @@
+#!/bin/sh
+# ld for Linux hosts. UNIXNU_LD64 is Apple's ld64 (scripts/build-ld64-linux.sh), which the kernel link needs:
+# ld64.lld ignores -static, -segaddr, -segment_order, -image_base and -alias_list. Without it, ld64.lld serves the
+# other links; it takes ld64 options except the old -<platform>_version_min MIN, which it wants as
+# -platform_version PLATFORM MIN SDK (one, however often given).
+[ -n "$UNIXNU_LD64" ] && exec "$UNIXNU_LD64" "$@"
+platform=
+for arg; do
+  shift
+  if [ -n "$want" ]; then [ -n "$platform" ] || { platform=$want; min=$arg; }; want=; continue; fi
+  case $arg in
+    -ios_version_min|-iphoneos_version_min) want=ios ;;
+    -macosx_version_min|-macos_version_min) want=macos ;;
+    -platform_version) platform=given; set -- "$@" "$arg" ;;
+    *) set -- "$@" "$arg" ;;
+  esac
+done
+if [ -n "$platform" ] && [ "$platform" != given ]; then
+  set -- -platform_version "$platform" "$min" "$min" "$@"
+fi
+exec ld64.lld "$@"

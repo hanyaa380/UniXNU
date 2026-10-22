@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""iig for Linux hosts: serve the outputs Apple's iig generated in a macOS build (scripts/export-iig-outputs.py).
+
+Called as XNU calls iig (iig --def X.iig --header X.h --impl X.iig.cpp ... -- CFLAGS). Copies the recorded X.h and
+X.iig.cpp from UNIXNU_IIG_OUTPUTS, and refuses unless X.iig has the sha256 recorded for those outputs.
+"""
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def value(args, name):
+    return args[args.index(name) + 1] if name in args else None
+
+
+def main(args):
+    args = args[:args.index('--')] if '--' in args else args
+    source, header, impl = value(args, '--def'), value(args, '--header'), value(args, '--impl')
+    if not source or not header:
+        sys.exit('iig-replay: usage: iig --def X.iig --header X.h [--impl X.iig.cpp] [-- CFLAGS]')
+    outputs = Path(os.environ.get('UNIXNU_IIG_OUTPUTS') or sys.exit('iig-replay: UNIXNU_IIG_OUTPUTS is not set'))
+    entry = json.loads((outputs / 'manifest.json').read_text())['files'].get(Path(source).name)
+    if entry is None:
+        sys.exit(f'iig-replay: {outputs} has no outputs for {Path(source).name}')
+    digest = hashlib.sha256(Path(source).read_bytes()).hexdigest()
+    if digest != entry['source_sha256']:
+        sys.exit(f'iig-replay: {source} differs from the source of the recorded outputs (sha256 {digest}, '
+                 f'recorded {entry["source_sha256"]}); export them again from a macOS build of these sources')
+    stem = Path(source).stem
+    for name, target, key in ((f'{stem}.h', header, 'header_sha256'), (f'{stem}.iig.cpp', impl, 'impl_sha256')):
+        if not target or target == '/dev/null':
+            continue
+        data = (outputs / name).read_bytes()
+        if hashlib.sha256(data).hexdigest() != entry[key]:
+            sys.exit(f'iig-replay: {outputs / name} does not match manifest.json')
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        Path(target).write_bytes(data)
+
+
+main(sys.argv[1:])

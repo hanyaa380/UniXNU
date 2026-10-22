@@ -69,3 +69,11 @@ kind = "refer"
 git = "https://github.com/apple-oss-distributions/IOStorageFamily.git"
 ref = "main"
 commit = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"
+
+# mig for the kernel step on Linux hosts (macOS uses the one of Xcode).
+[[source]]
+name = "bootstrap_cmds"
+kind = "refer"
+git = "https://github.com/apple-oss-distributions/bootstrap_cmds.git"
+ref = "bootstrap_cmds-133.140.1"
+commit = "619db33806b11b58fa14078bc7a811958312e52d"
