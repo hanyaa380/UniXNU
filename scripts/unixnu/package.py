@@ -2,7 +2,7 @@
 import os
 import shutil
 
-from .util import Error, clang_bin, expand, log, run, tool
+from .util import Error, clang_bin, expand, install, log, run, tool
 
 
 def edk2_dir(ctx, modules):
@@ -21,7 +21,7 @@ def edk2_dir(ctx, modules):
 def build(ctx, modules, target='DEBUG', toolchain='CLANGPDB'):
     log('package: UniXNU')
     edk2 = edk2_dir(ctx, modules)
-    tool('clang', 'brew install llvm')
+    tool('clang', install('llvm', 'clang'))
     env = dict(os.environ, UNIXNU_EDK2=str(edk2), UNIXNU_BUILD_DIR=str(ctx.work / 'package'), JOBS=str(ctx.jobs))
     if toolchain == 'CLANGPDB' and 'CLANG_BIN' not in env:
         env['CLANG_BIN'] = clang_bin(ctx.work / 'toolchain')

@@ -1,6 +1,7 @@
 """Small helpers shared by the build driver."""
 import hashlib
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,18 @@ def sha256_file(path):
 
 
 EXTRA_BIN = ('/opt/homebrew/opt/llvm/bin', '/opt/homebrew/opt/lld/bin', '/usr/local/opt/llvm/bin', '/usr/local/opt/lld/bin')
+MACOS = platform.system() == 'Darwin'
+
+
+def install(brew, dnf=None):
+    """The install hint of a tool for this host: Homebrew on macOS, dnf (Fedora) elsewhere."""
+    return f'brew install {brew}' if MACOS else f'dnf install {dnf or brew}'
+
+
+def need_macos(what):
+    """Refuse a step that only runs on macOS before it starts."""
+    if not MACOS:
+        raise Error(f'{what} needs macOS; run it on a Mac or with the "macOS build" workflow')
 
 
 def tool(name, hint=''):
@@ -73,13 +86,13 @@ CLANGPDB_TOOLS = ('clang', 'lld-link', 'llvm-lib', 'llvm-rc')
 def clang_bin(directory):
     """A directory with the tools EDK II's CLANGPDB tool chain expects (CLANG_BIN), linked from wherever they are.
 
-    Apple's clang has no llvm-lib or lld-link, so the Homebrew LLVM and lld are used.
+    Apple's clang has no llvm-lib or lld-link, so the Homebrew LLVM and lld are used; on Linux they are on PATH.
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     for name in CLANGPDB_TOOLS:
         link = directory / name
-        target = tool(name, 'brew install llvm lld')
+        target = tool(name, install('llvm lld', 'clang llvm lld'))
         if link.is_symlink() or link.exists():
             link.unlink()
         link.symlink_to(target)

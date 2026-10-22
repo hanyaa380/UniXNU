@@ -15,7 +15,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .util import Error, expand, log, run, sha256_file, tool
+from .util import Error, expand, install, log, need_macos, run, sha256_file, tool
 
 EPOCH = 315532800   # 1980-01-01, the first FAT timestamp; keeps the volume reproducible
 
@@ -47,14 +47,14 @@ def check_native_root(kernel, arguments):
         return
     if values.get('sheng-pmgr') != ['2']:
         raise Error('native UFS root boot needs exactly one sheng-pmgr=2; the unchanged target AMFI otherwise panics with No PMGR')
-    symbols = run([tool('llvm-nm', 'brew install llvm'), '--defined-only', kernel], capture=True)
+    symbols = run([tool('llvm-nm', install('llvm')), '--defined-only', kernel], capture=True)
     if not any(line.split()[-1:] == ['_sheng_pmgr_run'] for line in symbols.splitlines()):
         raise Error('the native UFS root kernel lacks the linked sheng PMGR integration')
 
 
 def write_volume(stage, image, label, size_mib):
     for tool_name in ('mformat', 'mcopy'):
-        tool(tool_name, 'brew install mtools')
+        tool(tool_name, install('mtools'))
     image.unlink(missing_ok=True)
     env = dict(os.environ, MTOOLS_SKIP_CHECK='1', TZ='UTC')
     sectors = size_mib * 2048
@@ -65,7 +65,7 @@ def write_volume(stage, image, label, size_mib):
 
 def skip_setup_seed(ctx, base, tool_path):
     """A copy of the Data seed whose preferences mark Setup (the Hello pages) as done; cached by the hash of the base."""
-    tool('hdiutil')
+    need_macos('--skip-setup (hdiutil)')
     out = paths(ctx)[0]
     out.mkdir(parents=True, exist_ok=True)
     seed = out / f'data-skip-setup-{sha256_file(base)[:12]}.dbr'

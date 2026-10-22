@@ -12,21 +12,29 @@ Manifest (little endian): "SHNGROOT", u32 version=1, u32 count, u64 image_bytes,
 and at byte 4064 the SHA-256 of bytes 0..4063.
 
 The images come from the IPSW (a local file or a remote URL, see ipsw.py) and are checked against the pins of
-board.toml. The disk images are attached read-only without mounting (macOS hdiutil). Nothing is flashed: the
-report prints the fastboot command, to be run by the user.
+board.toml. On macOS the disk images are attached read-only without mounting (hdiutil). Elsewhere a UDIF image
+is expanded from its block table and a raw image is read as it is, which gives the same bytes. Nothing is flashed:
+the report prints the fastboot command, to be run by the user.
 """
+import bz2
 import hashlib
 import json
+import lzma
 import plistlib
 import re
+import shutil
 import struct
 import subprocess
+import zlib
 
 from .ipsw import Ipsw
-from .util import Error, log, run, sha256_file, tool
+from .util import MACOS, Error, install, log, run, sha256_file
 
 MIB = 1 << 20
 CHUNK = 8 * MIB
+SECTOR = 512
+# UDIF block chunk types: zero fill, raw, ignored, zlib, bzip2, LZFSE, LZMA, comment and end of table.
+ZERO, RAW, IGNORE, ZLIB, BZIP2, LZFSE, LZMA, COMMENT, END = 0, 1, 2, 0x80000005, 0x80000006, 0x80000007, 0x80000008, 0x7ffffffe, 0xffffffff
 
 
 def paths(ctx):
@@ -34,9 +42,83 @@ def paths(ctx):
     return out, out / 'userdata-root.img', out / 'userdata-root.json'
 
 
+def udif(dmg):
+    """The koly trailer of a UDIF image, or None for a raw image."""
+    with open(dmg, 'rb') as handle:
+        handle.seek(-512, 2)
+        koly = handle.read(512)
+    return koly if koly[:4] == b'koly' else None
+
+
 def image_size(dmg):
-    info = subprocess.run(['hdiutil', 'imageinfo', '-plist', str(dmg)], capture_output=True, check=True).stdout
-    return plistlib.loads(info)['Size Information']['Total Bytes']
+    if MACOS:
+        info = subprocess.run(['hdiutil', 'imageinfo', '-plist', str(dmg)], capture_output=True, check=True).stdout
+        return plistlib.loads(info)['Size Information']['Total Bytes']
+    koly = udif(dmg)
+    return struct.unpack_from('>Q', koly, 0x1ec)[0] * SECTOR if koly else dmg.stat().st_size
+
+
+def udif_chunks(handle, koly):
+    """The block chunks in disk order, each (type, first byte, byte count, data offset, data length, block index),
+    and the CRC32 of each block table, which covers its expanded data except the ignored chunks (None if not CRC32)."""
+    xml_offset, xml_length = struct.unpack_from('>QQ', koly, 0xd8)
+    handle.seek(xml_offset)
+    chunks, crcs = [], []
+    for block_index, block in enumerate(plistlib.loads(handle.read(xml_length))['resource-fork']['blkx']):
+        mish = block['Data']
+        if mish[:4] != b'mish':
+            raise Error('UDIF block table without mish header')
+        first, data_offset = struct.unpack_from('>Q', mish, 8)[0], struct.unpack_from('>Q', mish, 0x18)[0]
+        kind, _ = struct.unpack_from('>II', mish, 0x40)
+        crcs.append(struct.unpack_from('>I', mish, 0x48)[0] if kind == 2 else None)
+        for index in range(struct.unpack_from('>I', mish, 0xc8)[0]):
+            kind, _, sector, count, offset, length = struct.unpack_from('>IIQQQQ', mish, 0xcc + 40 * index)
+            if kind not in (COMMENT, END):
+                chunks.append((kind, (first + sector) * SECTOR, count * SECTOR, data_offset + offset, length, block_index))
+    return sorted(chunks, key=lambda chunk: chunk[1]), crcs
+
+
+def lzfse(data):
+    decoder = shutil.which('lzfse')
+    if not decoder:
+        raise Error(f'lzfse not found on PATH ({install("lzfse")}); it decodes the UDIF disk image')
+    return subprocess.run([decoder, '-decode'], input=data, capture_output=True, check=True).stdout
+
+
+def read_image(dmg, size):
+    """The bytes of the attached disk image, in pieces: expanded UDIF chunks, or the raw file."""
+    koly = udif(dmg)
+    with open(dmg, 'rb') as handle:
+        if not koly:
+            while data := handle.read(CHUNK):
+                yield data
+            return
+        chunks, want = udif_chunks(handle, koly)
+        crcs = [0] * len(want)
+        cursor = 0
+        for kind, start, count, offset, length, block in chunks:
+            if start != cursor:
+                raise Error(f'{dmg.name}: UDIF chunks leave a gap or overlap at {cursor:#x}')
+            if kind in (ZERO, IGNORE):
+                data = bytes(count)
+            else:
+                handle.seek(offset)
+                packed = handle.read(length)
+                decode = {RAW: bytes, ZLIB: zlib.decompress, BZIP2: bz2.decompress, LZFSE: lzfse, LZMA: lzma.decompress}.get(kind)
+                if not decode:
+                    raise Error(f'{dmg.name}: UDIF chunk type {kind:#x} is not supported')
+                data = decode(packed)
+            if len(data) != count:
+                raise Error(f'{dmg.name}: UDIF chunk at {start:#x} expands to {len(data)} bytes, not {count}')
+            if kind != IGNORE:
+                crcs[block] = zlib.crc32(data, crcs[block])
+            yield data
+            cursor += count
+        if cursor != size:
+            raise Error(f'{dmg.name}: UDIF chunks cover {cursor} bytes of {size}')
+        for block, (got, expected) in enumerate(zip(crcs, want)):
+            if expected is not None and got != expected:
+                raise Error(f'{dmg.name}: UDIF block table {block} CRC32 {got:08x}, expected {expected:08x}')
 
 
 def attach(dmg):
@@ -55,7 +137,6 @@ def build(ctx, dry_run=False):
     spec = ctx.board.get('userdata')
     if not spec:
         raise Error('board.toml has no [userdata]')
-    tool('hdiutil', 'the disk images are attached with macOS hdiutil')
     source = Ipsw(ctx)
     capacity = (spec['last_lba'] - spec['first_lba'] + 1) * spec.get('lba_bytes', 4096)
     if dry_run:
@@ -82,23 +163,28 @@ def build(ctx, dry_run=False):
     with image.open('wb') as target:
         target.truncate(total)
         for (name, offset, size), (_, dmg) in zip(layout, sources):
-            device = attach(dmg)
-            try:
-                raw = device.replace('/dev/disk', '/dev/rdisk')
-                digest = hashlib.sha256()
-                target.seek(offset)
-                done = 0
-                with open(raw, 'rb', buffering=0) as handle:
-                    while done < size:
-                        want = min(CHUNK, size - done)
-                        data = handle.read(want)
-                        if len(data) != want:
-                            raise Error(f'short read from {raw} at {done}')
-                        digest.update(data)
-                        target.write(data)
-                        done += want
-            finally:
-                subprocess.run(['hdiutil', 'detach', device], capture_output=True)
+            digest = hashlib.sha256()
+            target.seek(offset)
+            if MACOS:
+                device = attach(dmg)
+                try:
+                    raw = device.replace('/dev/disk', '/dev/rdisk')
+                    done = 0
+                    with open(raw, 'rb', buffering=0) as handle:
+                        while done < size:
+                            want = min(CHUNK, size - done)
+                            data = handle.read(want)
+                            if len(data) != want:
+                                raise Error(f'short read from {raw} at {done}')
+                            digest.update(data)
+                            target.write(data)
+                            done += want
+                finally:
+                    subprocess.run(['hdiutil', 'detach', device], capture_output=True)
+            else:
+                for data in read_image(dmg, size):
+                    digest.update(data)
+                    target.write(data)
             entries.append((name, offset, size, digest.digest()))
             log(f'userdata: {name} {size} bytes at {offset:#x} sha256 {digest.hexdigest()}')
         header = bytearray(4096)

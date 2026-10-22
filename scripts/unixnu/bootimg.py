@@ -14,14 +14,14 @@ import zlib
 from pathlib import Path
 
 from .config import load_toml
-from .util import Error, log, run, sha256_file, tool
+from .util import Error, install, log, run, sha256_file, tool
 
 DEFAULTS = {'header_version': 0, 'base': 0, 'kernel_offset': 0x8000, 'tags_offset': 0x1e00000, 'pagesize': 4096}
 MKBOOTIMG_FLAGS = ('base', 'kernel_offset', 'tags_offset', 'pagesize', 'header_version', 'ramdisk_offset', 'second_offset', 'cmdline')
 
 
 def compile_shim(uefi, base, size, requires_header, scratch):
-    clang, objcopy, nm = tool('clang'), tool('llvm-objcopy', 'brew install llvm'), tool('llvm-nm', 'brew install llvm')
+    clang, objcopy, nm = tool('clang', install('llvm', 'clang')), tool('llvm-objcopy', install('llvm')), tool('llvm-nm', install('llvm'))
     source = uefi / 'BootShim/BootShim.S'
     if not source.is_file():
         raise Error(f'{source} missing: --uefi must be a Mu-Silicium checkout')
@@ -43,7 +43,7 @@ def patch_dtb(dtb, nodes, scratch):
     """Add device-tree nodes the stock bootloader expects (board.toml [[bootimg.dtb_node]])."""
     if not nodes:
         return dtb
-    fdtput, fdtget = tool('fdtput', 'brew install dtc'), tool('fdtget', 'brew install dtc')
+    fdtput, fdtget = tool('fdtput', install('dtc')), tool('fdtget', install('dtc'))
     work = scratch / 'device.dtb'
     work.write_bytes(dtb)
     for node in nodes:

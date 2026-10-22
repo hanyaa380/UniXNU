@@ -153,6 +153,24 @@ jobs:
           if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
           ./unixnu build kernel "${args[@]}"
 
+      # Apple's iig output for kernel builds on Linux (UNIXNU_IIG_OUTPUTS). iig runs long before the kernel link,
+      # so this also runs when the kernel step fails.
+      - name: Export the iig outputs
+        if: always()
+        run: |
+          for tree in out/*/tree; do
+            python3 "$tree/scripts/export-iig-outputs.py" "out/iig-outputs" || echo "no iig outputs in $tree"
+          done
+
+      - name: Upload the iig outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-iig-outputs
+          path: out/iig-outputs/**
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Build userdata
         if: contains(inputs.steps, 'userdata')
         env:
