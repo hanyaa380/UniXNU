@@ -77,3 +77,45 @@ kind = "refer"
 git = "https://github.com/apple-oss-distributions/bootstrap_cmds.git"
 ref = "bootstrap_cmds-133.140.1"
 commit = "619db33806b11b58fa14078bc7a811958312e52d"
+
+# libclang_rt.cc_kext for the kernel step on Linux hosts (Xcode has it): compiler-rt's builtins and kernel profile
+# runtime, compiled against XNU's headers and these Libc headers.
+[[source]]
+name = "compiler-rt"
+kind = "refer"
+git = "https://github.com/llvm/llvm-project.git"
+ref = "llvmorg-21.1.8"
+commit = "2078da43e25a4623cab2d0d60decddf709aaea28"
+path = "compiler-rt"
+
+[[source]]
+name = "Libc"
+kind = "refer"
+git = "https://github.com/apple-oss-distributions/Libc.git"
+ref = "Libc-1592.100.35"
+commit = "899a3b2d52d95d75e05fb286a5e64975ec3de757"
+path = "include"
+
+[[source]]
+name = "libmalloc"
+kind = "refer"
+git = "https://github.com/apple-oss-distributions/libmalloc.git"
+ref = "libmalloc-521.100.59"
+commit = "5819cfb972b7a75d29df2faf8a485c0fa56c6aec"
+path = "include"
+
+[[source]]
+name = "llvm-third-party"
+kind = "refer"
+git = "https://github.com/llvm/llvm-project.git"
+ref = "llvmorg-21.1.8"
+commit = "2078da43e25a4623cab2d0d60decddf709aaea28"
+path = "third-party"
+
+[[source]]
+name = "dyld"
+kind = "refer"
+git = "https://github.com/apple-oss-distributions/dyld.git"
+ref = "dyld-1125.5"
+commit = "d1a0f6869ece370913a3f749617e457f3b4cd7c4"
+path = "include"

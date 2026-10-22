@@ -130,6 +130,13 @@ fi
 if [ ! -f "$KERNEL_SDKROOT/usr/local/lib/kernel/libfirehose_kernel.a" ]; then
   bash scripts/build-firehose.sh
 fi
+# Linux hosts: the kernel's libclang_rt.cc_kext (Xcode ships it) from compiler-rt, against the headers installed above.
+if [ "${XNU_HOST_PATCHES:-}" = linux ]; then
+  if [ ! -f build/cc-kext/libclang_rt.cc_kext_ios.a ] || [ scripts/build-cc-kext-linux.py -nt build/cc-kext/libclang_rt.cc_kext_ios.a ]; then
+    python3 scripts/build-cc-kext-linux.py
+  fi
+  HOST_MAKE_ARGS+=("LD_KERNEL_LIBS=$ROOT/build/cc-kext/libclang_rt.cc_kext_ios.a")
+fi
 # The baseline builds the kernel; `all` also checks the Apple kext export ABI.
 EXTRA_MAKE_ARGS=()
 ARM_DT_PLATFORM=${XNU_ARM_DT_PLATFORM:-0}

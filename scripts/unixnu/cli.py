@@ -72,7 +72,10 @@ def need_uefi(ctx):
     return uefi
 
 
-REFERENCES = {'kernel': ('xnu', 'libplatform', 'libdispatch', 'AvailabilityVersions', 'libpthread', 'corecrypto-2023', 'IOStorageFamily', 'bootstrap_cmds'), 'package': ('edk2',), 'firmware': ('edk2',)}
+REFERENCES = {'kernel': ('xnu', 'libplatform', 'libdispatch', 'AvailabilityVersions', 'libpthread', 'corecrypto-2023', 'IOStorageFamily'), 'package': ('edk2',), 'firmware': ('edk2',)}
+# What Xcode provides on macOS: mig, and the sources of libclang_rt.cc_kext.
+if not MACOS:
+    REFERENCES['kernel'] += ('bootstrap_cmds', 'compiler-rt', 'llvm-third-party', 'Libc', 'libmalloc', 'dyld')
 
 
 def prepare(ctx, steps=()):
