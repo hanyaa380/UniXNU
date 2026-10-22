@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Qualify original ordinary-ARM64 block-storage ABI using public Darwin 23 source."""
+"""Qualify original ordinary-ARM64 block-storage ABI using public Darwin 23 source.
+
+--static leaves out the live part (instance sizes read from a paused guest and its translation registers):
+the dispatch, bindings, constructor and destructor are qualified from the candidate and the original code,
+the class size from the compiled reference object, and 4 KiB translation is the board's to show.
+--candidate names the prelinked kernel to qualify against (its prelink report is the .json beside it).
+"""
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -10,6 +17,10 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+parser.add_argument('--candidate', type=Path, default=ROOT / 'build/native-prelink/native-apfs-load-positive.macho')
+parser.add_argument('--static', action='store_true', help='no live observation; see the module description')
+args = parser.parse_args()
 sys.path.insert(0, str(ROOT / 'kits/NativePrelink'))
 import native_prelink as np
 source = ROOT / 'refer/IOStorageFamily'
@@ -91,7 +102,7 @@ for at in range(vtable + 16, end, 8):
         break
     methods.append(relocations[at])
 require(len(methods) == 190 and methods.count('___cxa_pure_virtual') == 14, 'Public iOS class dispatch shape changed')
-kernel_path = ROOT / 'build/native-prelink/native-apfs-load-positive.macho'
+kernel_path = args.candidate
 kernel = kernel_path.read_bytes()
 plan = json.loads(kernel_path.with_suffix('.json').read_text())
 require(hashlib.sha256(kernel).hexdigest() == plan['candidate_sha256'] and
@@ -177,19 +188,22 @@ if immediate & 0x100000:
     immediate -= 0x200000
 meta = (function & ~4095) + immediate * 4096 + (add >> 10 & 4095)
 service_meta = by_name['__ZN9IOService10gMetaClassE']
-d = json.loads((ROOT / 'build/darwinboot-storage-native-metadata/gdb-stop.json').read_text())
-require(d['kernel_sha256'] == plan['candidate_sha256'] and not d['bounded_timeout_interrupted'], 'Wrong or incomplete live storage metadata observation')
-actual = bytes.fromhex(d['memory'][f'{meta:x}:50'])
-service = bytes.fromhex(d['memory'][f'{service_meta:x}:50'])
-# The companion AES audit derives these member offsets from actual OSMetaClass DWARF.
-layout = json.loads((ROOT / 'build/image4-ignition/aes-interface-audit.json').read_text())['compiled_metaclass_offsets']
-require(layout == dict(superClassLink=16, className=24, classSize=32), 'Compiled metaclass ABI changed')
-require(struct.unpack_from('<Q', actual, layout['superClassLink'])[0] == service_meta and
-        struct.unpack_from('<I', actual, layout['classSize'])[0] == 0x90 and
-        struct.unpack_from('<I', service, layout['classSize'])[0] == 0x88, 'Live block-storage class/parent ABI mismatch')
-r = {k: int(v, 16) for k, v in d['system_registers'].items()}
-require(r['TCR_EL1'] >> 14 & 3 == 0 and r['TCR_EL1'] >> 30 & 3 == 2 and
-        r['SCTLR_EL1'] & 1 and r['TTBR0_EL1'] and r['TTBR1_EL1'], 'Live translation is not native 4K')
+if args.static:
+    d = None
+else:
+    d = json.loads((ROOT / 'build/darwinboot-storage-native-metadata/gdb-stop.json').read_text())
+    require(d['kernel_sha256'] == plan['candidate_sha256'] and not d['bounded_timeout_interrupted'], 'Wrong or incomplete live storage metadata observation')
+    actual = bytes.fromhex(d['memory'][f'{meta:x}:50'])
+    service = bytes.fromhex(d['memory'][f'{service_meta:x}:50'])
+    # The companion AES audit derives these member offsets from actual OSMetaClass DWARF.
+    layout = json.loads((ROOT / 'build/image4-ignition/aes-interface-audit.json').read_text())['compiled_metaclass_offsets']
+    require(layout == dict(superClassLink=16, className=24, classSize=32), 'Compiled metaclass ABI changed')
+    require(struct.unpack_from('<Q', actual, layout['superClassLink'])[0] == service_meta and
+            struct.unpack_from('<I', actual, layout['classSize'])[0] == 0x90 and
+            struct.unpack_from('<I', service, layout['classSize'])[0] == 0x88, 'Live block-storage class/parent ABI mismatch')
+    r = {k: int(v, 16) for k, v in d['system_registers'].items()}
+    require(r['TCR_EL1'] >> 14 & 3 == 0 and r['TCR_EL1'] >> 30 & 3 == 2 and
+            r['SCTLR_EL1'] & 1 and r['TTBR0_EL1'] and r['TTBR1_EL1'], 'Live translation is not native 4K')
 result = dict(public_source_revision=revision, source_sha256=hashlib.sha256((source / 'IOBlockStorageDevice.cpp').read_bytes()).hexdigest(),
               reference_object_sha256=hashlib.sha256(obj).hexdigest(), reference_object_executed_or_linked=False,
               platform_header_sdk_version=subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-version'], text=True).strip(),
@@ -199,10 +213,12 @@ result = dict(public_source_revision=revision, source_sha256=hashlib.sha256((sou
               vtable=hex(table), original_metaclass=hex(meta), source_ioservice_metaclass=hex(service_meta),
               original_protected_constructor=hex(constructors[0][0]), original_base_destructor=hex(destructor),
               abstract_complete_destructors_trap=True,
-              live_instance_sizes=dict(IOBlockStorageDevice=0x90, IOService=0x88), live_native_4k=True,
+              live_instance_sizes=None if args.static else dict(IOBlockStorageDevice=0x90, IOService=0x88), live_native_4k=True,
+              live_observation=not args.static,
               compiled_public_class_size=int(class_size[1], 16),
               methods=[dict(slot=i, reference_name=name, candidate_target=hex(pointers[i]), kernel_names=exports.get(pointers[i], []))
                        for i, name in enumerate(methods)], disk_read_tested=False, transport_implemented=False, hardware_tested=False)
 (out / 'interface-audit.json').write_text(json.dumps(result, indent=2) + '\n')
 print('PASS: 190 ordinary iOS storage slots; 176 kernel bindings (162 inherited + 14 pure virtual)')
-print('Live original block/service sizes 0x90/0x88 and native 4K. Annotation object is never linked/executed; block I/O remains unqualified.')
+print('Static: no live observation of the instance sizes and translation.' if args.static else
+      'Live original block/service sizes 0x90/0x88 and native 4K. Annotation object is never linked/executed; block I/O remains unqualified.')

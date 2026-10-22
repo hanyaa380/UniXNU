@@ -58,6 +58,7 @@ on:
 
 permissions:
   contents: read
+  actions: read   # pre_build may download an artifact of an earlier run (gh run download)
 
 concurrency:
   group: macos-build-${{ github.ref }}
@@ -141,6 +142,7 @@ jobs:
         env:
           PRE_BUILD: ${{ inputs.pre_build }}
           DEVICE_DIR: ${{ github.workspace }}/device
+          GH_TOKEN: ${{ github.token }}
         run: bash -euo pipefail -c "$PRE_BUILD"
 
       - name: Build kernel
