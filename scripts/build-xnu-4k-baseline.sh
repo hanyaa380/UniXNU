@@ -31,23 +31,23 @@ if [ ! -x .cache/fakeroot/usr/local/libexec/availability.pl ]; then
     OBJROOT="$ROOT/build/availability" SYMROOT="$ROOT/build/availability" \
     DSTROOT="$ROOT/.cache/fakeroot" CMAKE="$(command -v cmake)" NINJA="$(command -v ninja)"
 fi
-# The optional observation hooks overlap existing root/exec patch context.
-# Remove them first so earlier independent patches retain their idempotent checks.
-# The same holds for the boot-time GPU addon mount and the staged system apps copy (zzy), which edit the owner Data mount function
-# inside the systemos patch. Reverse newest first; the loop below re-applies them in name order.
-for LATE_PATCH in "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-staged-system-apps.patch" \
-    "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
-  if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
-    git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
-  fi
-done
 # Linux hosts (XNU_HOST_PATCHES=linux, set by the unixnu driver) add patches/xnu-linux: build adaptations for
 # upstream clang that must not reach an Apple clang build.
 HOST_PATCHES=()
 if [ "${XNU_HOST_PATCHES:-}" = linux ]; then
   HOST_PATCHES=("$ROOT"/patches/xnu-linux/*.patch)
 fi
-for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.patch ${HOST_PATCHES[@]+"${HOST_PATCHES[@]}"}; do
+# Later personality patches overlap earlier ones in KernelConfigTables. Undo
+# the complete patch set in reverse order before reapplying it in forward
+# order; checking each patch in forward order cannot reverse overlaps.
+PATCHES=("$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.patch ${HOST_PATCHES[@]+"${HOST_PATCHES[@]}"})
+for ((index = ${#PATCHES[@]} - 1; index >= 0; index--)); do
+  PATCH=${PATCHES[index]}
+  if git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
+    git -C .cache/xnu-work apply --reverse "$PATCH"
+  fi
+done
+for PATCH in "${PATCHES[@]}"; do
   if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --check "$PATCH"
     git -C .cache/xnu-work apply "$PATCH"
