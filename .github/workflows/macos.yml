@@ -84,6 +84,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ inputs.xcode }}.app/Contents/Developer
       UNIXNU_DEVICE: ${{ github.workspace }}/device
+      UNIXNU_UEFI: ${{ github.workspace }}/Mu-Silicium
       UNIXNU_IPSW: ${{ inputs.ipsw_url }}
       DEFCONFIG: ${{ inputs.defconfig }}
       STEPS: ${{ inputs.steps }}
@@ -100,6 +101,12 @@ jobs:
           ref: ${{ inputs.device_ref }}
           path: device
           token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
+
+      - name: Check out Mu-Silicium
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Project-Silicium/Mu-Silicium
+          path: Mu-Silicium
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -148,7 +155,7 @@ jobs:
           # cmake and ninja come with the image. Homebrew LLVM is keg-only and stays off PATH: the driver finds it for
           # the archive builders, and everything else uses Xcode's clang. LLD is a separate formula since LLVM 23;
           # the payload step links the panic screen with ld.lld.
-          brew install llvm lld mtools dtc
+          brew install llvm lld mtools dtc lzfse
           if ! command -v unifdef >/dev/null; then
             brew install unifdef
             echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
