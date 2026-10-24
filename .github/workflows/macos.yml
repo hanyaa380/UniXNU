@@ -247,14 +247,29 @@ jobs:
           if [ "$SKIP_SETUP" = true ]; then args+=(--skip-setup); fi
           ./unixnu build payload "${args[@]}"
 
+      - name: Encrypt the private kernel artifact
+        if: always() && steps.kernel.outcome == 'success'
+        env:
+          KERNEL_ARTIFACT_KEY: ${{ secrets.KERNEL_ARTIFACT_KEY }}
+        run: |
+          test -n "$KERNEL_ARTIFACT_KEY"
+          mkdir -p out/private-kernel
+          for dir in out/*/kernel; do
+            board=$(basename "$(dirname "$dir")")
+            for name in kernel.macho kernel.json; do
+              openssl enc -aes-256-cbc -pbkdf2 -salt \
+                -pass env:KERNEL_ARTIFACT_KEY \
+                -in "$dir/$name" \
+                -out "out/private-kernel/$board-$name.enc"
+            done
+          done
+
       - name: Upload the private kernel artifact
         if: always() && steps.kernel.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: unixnu-${{ steps.check.outputs.board }}-kernel-${{ github.run_attempt }}
-          path: |
-            out/*/kernel/**
-            out/*/logs/**
+          name: unixnu-${{ steps.check.outputs.board }}-kernel-encrypted-${{ github.run_attempt }}
+          path: out/private-kernel/**
           if-no-files-found: error
           retention-days: 3
 
